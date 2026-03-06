@@ -1,6 +1,5 @@
 import streamlit as st
 import api_sofascore as api
-import api_football_data as fd
 import ai_analyzer as ai
 import os
 from datetime import datetime
@@ -35,9 +34,6 @@ with col_sport:
     st.session_state.selected_sport = sport_choice
 
 st.divider()
-
-# Get API keys from Secrets
-rapid_api_key = os.environ.get("RAPID_API_KEY") or st.secrets.get("x-rapidapi-key", "")
 
 with st.spinner("🔄 מעדכן נתונים..."):
     games_by_date = api.fetch_games_for_dates(sport=sport_choice, days=5)
@@ -82,20 +78,11 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-tab1, tab2, tab3 = st.tabs(["💰 נתונים ויחסים", "⚔️ היסטוריה וסטטיסטיקה", "🧠 ניתוח AI (Groq)"])
+tab1, tab2, tab3 = st.tabs(["💰 נתונים ויחסים", "⚔️ היסטוריה וסטטיסטיקה", "🧠 ניתוח AI חכם"])
 
 with tab1:
     st.markdown("#### 🎲 יחסי הימורים (Match Odds)")
-    
-    # Get odds from both sources
     odds = deep_data['odds']
-    
-    # Try to get odds from RapidAPI if available
-    if rapid_api_key:
-        with st.spinner("⏳ משתחזר יחסים מעדכניים..."):
-            rapid_odds = fd.get_game_odds(selected_game['home'], selected_game['away'], rapid_api_key)
-            if rapid_odds and rapid_odds.get('1') != 'לא זמין':
-                odds.update(rapid_odds)
     
     st.markdown(f"""
         <div style="display:flex; gap:15px; margin-bottom:20px;">
@@ -130,56 +117,32 @@ with tab1:
         st.markdown("</div>", unsafe_allow_html=True)
 
 with tab2:
-    col_h2h, col_league = st.columns([1, 1])
-    
-    with col_h2h:
-        st.markdown("#### ⚔️ Head-to-Head")
-        if deep_data['h2h_summary'].get('total', 0) > 0:
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric('סה"כ', deep_data['h2h_summary'].get('total', 0))
-            c2.metric("בית", deep_data['h2h_summary'].get('home_wins', 0))
-            c3.metric("תיקו", deep_data['h2h_summary'].get('draws', 0))
-            c4.metric("חוץ", deep_data['h2h_summary'].get('away_wins', 0))
-            st.divider()
-            for match in deep_data['h2h_matches']:
-                st.markdown(f"<div class='data-box' style='text-align:center;'><b>{match['home']}</b> {match['home_score']}-{match['away_score']} <b>{match['away']}</b><br><small>{match['date']}</small></div>", unsafe_allow_html=True)
-        else:
-            st.info("אין מפגשים קודמים")
-    
-    with col_league:
-        st.markdown("#### 🏆 League Standing")
-        if rapid_api_key:
-            with st.spinner("⏳ משתחזר דירוג ליגה..."):
-                league_name = "premier_league" if "Premier" in selected_game['league'] else "la_liga"
-                standings = fd.get_league_standings(league_name, rapid_api_key)
-                
-                if standings:
-                    # Find home and away team positions
-                    home_pos = fd.get_team_league_position(selected_game['home'], standings)
-                    away_pos = fd.get_team_league_position(selected_game['away'], standings)
-                    
-                    if home_pos:
-                        st.markdown(f"**🏠 {selected_game['home']}**")
-                        st.metric("מקום", home_pos.get('position', '-'), f"{home_pos.get('points', 0)} נק'")
-                        st.caption(f"זכיות: {home_pos.get('won')} | תיקו: {home_pos.get('draw')} | הפסדות: {home_pos.get('lost')}")
-                    
-                    if away_pos:
-                        st.markdown(f"**✈️ {selected_game['away']}**")
-                        st.metric("מקום", away_pos.get('position', '-'), f"{away_pos.get('points', 0)} נק'")
-                        st.caption(f"זכיות: {away_pos.get('won')} | תיקו: {away_pos.get('draw')} | הפסדות: {away_pos.get('lost')}")
-                else:
-                    st.warning("לא ניתן להשיג דירוג ליגה כרגע")
-        else:
-            st.error("❌ חסר x-rapidapi-key ב-Secrets")
+    if deep_data['h2h_summary'].get('total', 0) > 0:
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric('סה"כ משחקים', deep_data['h2h_summary'].get('total', 0))
+        c2.metric("ניצחונות בית", deep_data['h2h_summary'].get('home_wins', 0))
+        c3.metric("תיקו", deep_data['h2h_summary'].get('draws', 0))
+        c4.metric("ניצחונות חוץ", deep_data['h2h_summary'].get('away_wins', 0))
+        st.divider()
+        for match in deep_data['h2h_matches']:
+            st.markdown(f"<div class='data-box' style='text-align:center;'><b>{match['home']}</b> {match['home_score']}-{match['away_score']} <b>{match['away']}</b><br><small>{match['date']} | {match['result']}</small></div>", unsafe_allow_html=True)
+    else:
+        st.info("אין מפגשים קודמים מתועדים בין הקבוצות.")
 
 with tab3:
     st.markdown("#### 🧠 מנוע ניתוח AI")
-    st.markdown("**ספק AI:** Groq (Llama 3 - חינם ומומלץ) 🚀")
+    ai_provider = st.radio("בחר ספק מודל AI:", ["Groq (Llama 3 - מומלץ חינם)", "ChatGPT (OpenAI)", "Gemini (Google)"], horizontal=True)
     
-    groq_api_key = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
+    # חילוץ מפתח ה-API בהתאם לבחירה
+    if "Gemini" in ai_provider:
+        api_key = os.environ.get("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", "")
+    elif "ChatGPT" in ai_provider:
+        api_key = os.environ.get("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
+    else:
+        api_key = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
         
-    if not groq_api_key:
-        st.error("❌ חסר מפתח GROQ_API_KEY. הוסף אותו ל-Secrets או ל-Environment Variables.")
+    if not api_key:
+        st.error(f"❌ חסר מפתח API עבור {ai_provider}. הוסף אותו ל-Secrets או ל-Environment Variables.")
     else:
         game_id_str = str(selected_game['id'])
         if game_id_str in st.session_state.ai_results:
@@ -189,10 +152,7 @@ with tab3:
                 del st.session_state.ai_results[game_id_str]
                 st.rerun()
         else:
-            if st.button("🚀 הפעל ניתוח AI עם Groq", use_container_width=True):
+            if st.button(f"🚀 הפעל ניתוח AI באמצעות {ai_provider}", use_container_width=True):
                 with st.spinner("🤖 מנתח את כל הנתונים..."):
-                    st.session_state.ai_results[game_id_str] = ai.analyze_match(st.session_state.selected_sport, selected_game, deep_data, groq_api_key, "Groq")
+                    st.session_state.ai_results[game_id_str] = ai.analyze_match(st.session_state.selected_sport, selected_game, deep_data, api_key, ai_provider)
                     st.rerun()
-
-st.markdown("---")
-st.markdown("<div style='text-align:center; font-size:0.8rem; color:#7a8a99;'>SportIQ ULTRA v2 | Data from SofaScore + RapidAPI Football Data | עדכון כל 30 דקות</div>", unsafe_allow_html=True)

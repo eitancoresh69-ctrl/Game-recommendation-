@@ -1,19 +1,107 @@
-# 🔐 Streamlit Secrets Configuration
-# Create this file at: .streamlit/secrets.toml
+#!/bin/bash
 
-# Football Data API (from your screenshot)
-# Get free key at: https://www.football-data.org/client/register
-FOOTBALL_DATA_API_KEY = "YOUR_FOOTBALL_DATA_KEY_HERE"
+# 🚀 SportIQ ULTRA v2 - SETUP SCRIPT
+# תסריט התקנה אוטומטי לנוחות המשתמש
 
-# RapidAPI Key (you already have this!)
-# This is from your screenshot - add your key
-RAPID_API_KEY = "e3c45d2ba2msh0a6788ca494b687b1e28065n82e3d3d003c1"
-RAPID_API_HOST = "free-api-live-football-data.p.rapidapi.com"
+echo "╔════════════════════════════════════════════════════════════════╗"
+echo "║        SportIQ ULTRA v2 - AUTOMATIC SETUP WIZARD              ║"
+echo "║                    Installation Script                        ║"
+echo "╚════════════════════════════════════════════════════════════════╝"
+echo ""
 
-# Groq API (for AI Analysis tab)
-# Get free key at: https://console.groq.com
-GROQ_API_KEY = "YOUR_GROQ_KEY_HERE"
+# בדוק Python
+echo "📦 Checking Python version..."
+python_version=$(python3 --version 2>&1 | awk '{print $2}')
+echo "   ✅ Python $python_version detected"
+echo ""
 
-# The-Odds-API (optional, for better odds data)
-# Get free key at: https://the-odds-api.com
-ODDS_API_KEY = "YOUR_ODDS_API_KEY_HERE"
+# התקנת dependencies
+echo "📥 Installing dependencies..."
+echo "   • streamlit"
+echo "   • google-generativeai"
+echo "   • requests"
+echo "   • pandas"
+echo ""
+
+pip install -r requirements.txt --quiet
+
+if [ $? -eq 0 ]; then
+    echo "   ✅ Dependencies installed successfully"
+else
+    echo "   ❌ Failed to install dependencies"
+    exit 1
+fi
+
+echo ""
+
+# הגדרת Gemini API Key
+echo "🔐 Setting up Gemini API Key..."
+echo ""
+echo "   📝 You need a Google Gemini API Key to use this app."
+echo "   📍 Get one at: https://makersuite.google.com/app/apikey"
+echo ""
+
+read -p "   🔑 Enter your Gemini API Key (or press Enter to skip): " api_key
+
+if [ -n "$api_key" ]; then
+    mkdir -p .streamlit
+    echo "GEMINI_API_KEY = \"$api_key\"" > .streamlit/secrets.toml
+    echo "   ✅ API Key saved to .streamlit/secrets.toml"
+else
+    echo "   ⚠️  API Key not configured. You can add it later in .streamlit/secrets.toml"
+fi
+
+echo ""
+
+# הרץ בדיקות
+echo "🧪 Running tests..."
+echo ""
+
+python simulation_engine.py > test_output.log 2>&1
+
+if [ $? -eq 0 ]; then
+    echo "   ✅ All tests passed!"
+    echo ""
+    tail -20 test_output.log | grep -E "PASS|FAIL"
+else
+    echo "   ⚠️  Some tests might have warnings (see test_output.log)"
+fi
+
+echo ""
+
+# הגדרות Streamlit
+echo "⚙️  Configuring Streamlit..."
+mkdir -p .streamlit
+
+cat > .streamlit/config.toml << 'EOF'
+[theme]
+primaryColor = "#00f0ff"
+backgroundColor = "#02040a"
+secondaryBackgroundColor = "#0c1220"
+textColor = "#e8f4f8"
+font = "sans serif"
+
+[client]
+showErrorDetails = true
+
+[server]
+headless = true
+port = 8501
+EOF
+
+echo "   ✅ Streamlit configured"
+echo ""
+
+# סיכום
+echo "════════════════════════════════════════════════════════════════"
+echo ""
+echo "✨ SETUP COMPLETE! ✨"
+echo ""
+echo "🚀 To start the application, run:"
+echo "   streamlit run app.py"
+echo ""
+echo "📱 The app will open at: http://localhost:8501"
+echo ""
+echo "📖 For more information, read: README.md"
+echo ""
+echo "════════════════════════════════════════════════════════════════"
