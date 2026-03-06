@@ -280,11 +280,14 @@ with st.sidebar:
     
     st.divider()
     
-    # סינון משחקים לתאריכים הנבחרים
+    # סינון משחקים לתאריכים הנבחרים (ללא משחקים שהתחילו)
     filtered_games = []
     for date_str in dates_list:
         if start_date <= date_str <= end_date:
-            filtered_games.extend(games_by_date[date_str])
+            for game in games_by_date[date_str]:
+                # ✅ בדיקה - משחקים שכבר התחילו לא יוצגו
+                if not api.game_has_started(game.get('start_timestamp', 0)):
+                    filtered_games.append(game)
     
     if not filtered_games:
         st.warning("⚠️ אין משחקים בטווח התאריכים שנבחר")
@@ -317,12 +320,19 @@ with st.sidebar:
     
     st.divider()
     
+    # ✅ הוסף ספירה לאחור
+    time_until = api.get_israel_time(selected_game.get('start_timestamp', 0))
+    now = datetime.now()
+    time_diff = time_until - now
+    hours = time_diff.total_seconds() / 3600
+    
     # סטטוס
     st.markdown(f"""
         <div style='background: rgba(0,240,255,0.08); border-left: 3px solid #00f0ff; padding: 12px; border-radius: 6px;'>
             <div style='font-size: 0.85rem; color: #a8b2c1; margin-bottom: 4px;'>🎯 משחק נבחר</div>
             <div style='font-size: 0.95rem; color: #00f0ff; font-weight: 600;'>{selected_game['home']} vs {selected_game['away']}</div>
             <div style='font-size: 0.8rem; color: #7a8a99; margin-top: 4px;'>{selected_game['league']}</div>
+            <div style='font-size: 0.75rem; color: #00ff88; margin-top: 8px;'>⏰ בעוד {hours:.1f} שעות</div>
         </div>
     """, unsafe_allow_html=True)
 
