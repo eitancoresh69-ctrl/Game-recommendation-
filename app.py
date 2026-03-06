@@ -6,16 +6,6 @@ from datetime import datetime
 
 st.set_page_config(page_title="SportIQ ULTRA v2", layout="wide", initial_sidebar_state="expanded")
 
-# --- פונקציה בטוחה למשיכת מפתחות API שלא מרסקת את האפליקציה ---
-def get_safe_api_key(key_name):
-    val = os.environ.get(key_name, "")
-    if val: return val
-    try:
-        return st.secrets.get(key_name, "")
-    except Exception:
-        return ""
-# -------------------------------------------------------------
-
 if 'ai_results' not in st.session_state: st.session_state.ai_results = {}
 if 'selected_sport' not in st.session_state: st.session_state.selected_sport = "כדורגל ⚽"
 
@@ -143,15 +133,16 @@ with tab3:
     st.markdown("#### 🧠 מנוע ניתוח AI")
     ai_provider = st.radio("בחר ספק מודל AI:", ["Groq (Llama 3 - מומלץ חינם)", "ChatGPT (OpenAI)", "Gemini (Google)"], horizontal=True)
     
+    # חילוץ מפתח ה-API בהתאם לבחירה
     if "Gemini" in ai_provider:
-        api_key = get_safe_api_key("GEMINI_API_KEY")
+        api_key = os.environ.get("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", "")
     elif "ChatGPT" in ai_provider:
-        api_key = get_safe_api_key("OPENAI_API_KEY")
+        api_key = os.environ.get("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
     else:
-        api_key = get_safe_api_key("GROQ_API_KEY")
+        api_key = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
         
     if not api_key:
-        st.error(f"❌ חסר מפתח API עבור {ai_provider}. יש להגדיר אותו בהגדרות ה-Secrets של האפליקציה ב-Streamlit Cloud.")
+        st.error(f"❌ חסר מפתח API עבור {ai_provider}. הוסף אותו ל-Secrets או ל-Environment Variables.")
     else:
         game_id_str = str(selected_game['id'])
         if game_id_str in st.session_state.ai_results:
