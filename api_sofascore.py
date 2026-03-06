@@ -11,14 +11,14 @@ HEADERS = {
     "Cache-Control": "no-cache"
 }
 
-# ✅ ליגות מסוננות - רק הליגות שהבחרת
+# ✅ TARGET LEAGUES - ONLY 8 LEAGUES YOU SELECTED
 TARGET_LEAGUES = {
     'כדורגל ⚽': [
         'UEFA Champions League',           # ליגת האלופות
         'Ligat Winner',                    # ליגת העל בישראל
         'LaLiga',                          # ליגה הספרדית
         'Copa del Rey',                    # גביע הספרד
-        'Supercopa',                       # סופר גביע ספרד
+        'Supercopa de España',             # סופר גביע ספרד
         'Premier League',                  # ליגה האנגלית
         'FA Cup',                          # גביע באנגליה
         'EFL Cup',                         # קפה של ליגה באנגליה
@@ -28,6 +28,7 @@ TARGET_LEAGUES = {
     'כדורסל 🏀': [
         'NBA',                             # NBA
         'Israeli Basketball League',       # ליגת כדורסל בישראל
+        'Basketball League',               # גם ככה יש
         'CBA'                              # ליגת הכדורסל של סין
     ]
 }
@@ -35,19 +36,37 @@ TARGET_LEAGUES = {
 def get_israel_time(utc_timestamp):
     """המרה של UTC לשעון ישראלי עם DST"""
     try:
+        if utc_timestamp == 0:
+            return datetime.now()
         utc_time = datetime.utcfromtimestamp(utc_timestamp)
-        israel_offset = 3 if (utc_time.month in [3,4,5,6,7,8,9]) and utc_time.day > 20 else 2
+        # DST בישראל: מרץ-אוקטובר +3, אחרת +2
+        is_dst = (utc_time.month in [3,4,5,6,7,8,9,10]) and utc_time.day > 20
+        israel_offset = 3 if is_dst else 2
         return utc_time + timedelta(hours=israel_offset)
     except:
-        return datetime.utcfromtimestamp(utc_timestamp)
+        return datetime.now()
 
 def game_has_started(start_timestamp):
-    """בדיקה האם המשחק כבר התחיל"""
+    """בדיקה האם המשחק כבר התחיל - בשעה ישראלית!"""
     try:
+        if start_timestamp == 0:
+            return False
+        
+        # ✅ FIX: השתמש בשעה ישראלית לשני הצדדים!
         game_time = get_israel_time(start_timestamp)
-        now = datetime.now()
-        return game_time < now
-    except:
+        
+        # זמן ישראלי כעת
+        utc_now = datetime.utcnow()
+        is_dst = (utc_now.month in [3,4,5,6,7,8,9,10]) and utc_now.day > 20
+        israel_offset = 3 if is_dst else 2
+        now_israel = utc_now + timedelta(hours=israel_offset)
+        
+        # בדיקה: אם משחק התחיל
+        is_started = game_time < now_israel
+        
+        return is_started
+    except Exception as e:
+        st.error(f"❌ שגיאה בבדיקת זמן משחק: {str(e)}")
         return False
 
 @st.cache_data(ttl=1800)
@@ -70,28 +89,37 @@ def fetch_games_for_dates(sport="כדורגל ⚽", days=7):
                     league = event.get("tournament", {}).get("name", "")
                     start_timestamp = event.get("startTimestamp", 0)
                     
-                    # ✅ סינון משחקים שכבר התחילו
+                    # ✅ סינון 1: רק ליגות שבחרנו
+                    league_match = False
+                    for target_league in target_league_names:
+                        if target_league.lower() in league.lower():
+                            league_match = True
+                            break
+                    
+                    if not league_match:
+                        continue
+                    
+                    # ✅ סינון 2: משחקים שכבר התחילו
                     if game_has_started(start_timestamp):
                         continue
                     
-                    # ✅ בדיקה שהליגה בתוך הרשימה המאושרת
-                    if any(target_league in league for target_league in target_league_names):
-                        israel_time = get_israel_time(start_timestamp)
-                        games_by_date[target_date].append({
-                            "id": event.get("id"),
-                            "time": israel_time.strftime("%H:%M"),
-                            "datetime": israel_time.strftime("%Y-%m-%d %H:%M"),
-                            "date": target_date,
-                            "league": league,
-                            "home": event.get("homeTeam", {}).get("name", "Unknown"),
-                            "home_id": event.get("homeTeam", {}).get("id"),
-                            "away": event.get("awayTeam", {}).get("name", "Unknown"),
-                            "away_id": event.get("awayTeam", {}).get("id"),
-                            "start_timestamp": start_timestamp
-                        })
+                    israel_time = get_israel_time(start_timestamp)
+                    games_by_date[target_date].append({
+                        "id": event.get("id"),
+                        "time": israel_time.strftime("%H:%M"),
+                        "datetime": israel_time.strftime("%Y-%m-%d %H:%M"),
+                        "date": target_date,
+                        "league": league,
+                        "home": event.get("homeTeam", {}).get("name", "Unknown"),
+                        "home_id": event.get("homeTeam", {}).get("id"),
+                        "away": event.get("awayTeam", {}).get("name", "Unknown"),
+                        "away_id": event.get("awayTeam", {}).get("id"),
+                        "start_timestamp": start_timestamp
+                    })
+                
                 games_by_date[target_date].sort(key=lambda x: x['time'])
         except Exception as e: 
-            st.warning(f"⚠️ שגיאה בטעינת משחקים: {str(e)}")
+            st.warning(f"⚠️ שגיאה בטעינת משחקים ל-{target_date}: {str(e)}")
     
     return {k: v for k, v in games_by_date.items() if v}
 
@@ -116,7 +144,7 @@ def get_team_stats(team_id, include_home_away=False):
     try:
         res = requests.get(url, headers=HEADERS, timeout=8)
         if res.status_code == 200:
-            events = res.json().get("events", [])[:20]  # ✅ הגדלנו ל-20 משחקים למידע טוב יותר
+            events = res.json().get("events", [])[:20]  # 20 משחקים
             for idx, e in enumerate(events):
                 h_score = e.get("homeScore", {}).get("current")
                 a_score = e.get("awayScore", {}).get("current")
@@ -136,7 +164,7 @@ def get_team_stats(team_id, include_home_away=False):
                 else:
                     stats["form"].append(("ה", "#ff3b5c")); stats["losses"] += 1
                 
-                # ✅ תוספת - טופס של 5 משחקים אחרונים
+                # טופס 5 משחקים אחרונים
                 if idx < 5:
                     stats["last_5_form"].append(stats["form"][-1])
             
@@ -160,7 +188,7 @@ def get_h2h_data(game_id, home_id, away_id):
             "total": 0, 
             "home_goals": 0, 
             "away_goals": 0,
-            "avg_goals": 0  # ✅ ממוצע שערים בדגם
+            "avg_goals": 0
         }
     }
     try:
@@ -195,7 +223,7 @@ def get_h2h_data(game_id, home_id, away_id):
                 if len(h2h_data["matches"]) >= 15: 
                     break
         
-        # ✅ חישוב ממוצע שערים
+        # חישוב ממוצע שערים
         if h2h_data["head_to_head"]["total"] > 0:
             total_goals = h2h_data["head_to_head"]["home_goals"] + h2h_data["head_to_head"]["away_goals"]
             h2h_data["head_to_head"]["avg_goals"] = total_goals / h2h_data["head_to_head"]["total"]
