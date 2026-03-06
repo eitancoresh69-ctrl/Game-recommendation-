@@ -22,14 +22,6 @@ TARGET_LEAGUES = [
     'Ligue 1', 'Coupe de France'         
 ]
 
-def get_safe_api_key(key_name):
-    val = os.environ.get(key_name, "")
-    if val: return val
-    try:
-        return st.secrets.get(key_name, "")
-    except Exception:
-        return ""
-
 def get_israel_time(utc_timestamp):
     try:
         utc_time = datetime.utcfromtimestamp(utc_timestamp)
@@ -55,6 +47,7 @@ def fetch_games_for_dates(sport="soccer", days=7):
                 for event in res.json().get("events", []):
                     league = event.get("tournament", {}).get("name", "")
                     
+                    # חסימה ספציפית לליגת הכדורגל הסינית שמתנגשת עם ה"סופר ליג" של הכדורסל
                     if sport == "כדורגל ⚽" and "Chinese Super League" in league:
                         continue
 
@@ -139,7 +132,7 @@ def get_h2h_data(game_id, home_id, away_id):
 
 def get_odds_from_the_odds_api(home_team, away_team):
     odds_data = {"1": "לא זמין", "X": "לא זמין", "2": "לא זמין", "over_2_5": "-", "under_2_5": "-"}
-    api_key = get_safe_api_key("ODDS_API_KEY")
+    api_key = os.environ.get("ODDS_API_KEY") or st.secrets.get("ODDS_API_KEY", "")
     if not api_key: return odds_data
         
     try:
