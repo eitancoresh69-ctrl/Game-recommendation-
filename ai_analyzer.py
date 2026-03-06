@@ -1,7 +1,19 @@
 import os
-import google.generativeai as genai
-from openai import OpenAI
-from groq import Groq
+
+try:
+    import google.generativeai as genai
+except ImportError:
+    pass
+
+try:
+    from openai import OpenAI
+except ImportError:
+    pass
+
+try:
+    from groq import Groq
+except ImportError:
+    pass
 
 def format_form_string(form_list):
     if not form_list: return "אין נתונים"
@@ -35,6 +47,7 @@ H2H: {h2h_stats}
         if "Groq" in ai_provider:
             client = Groq(api_key=api_key)
             response = client.chat.completions.create(
+                # עדכון השם של המודל למודל הפעיל החדש של Groq
                 model="llama-3.3-70b-versatile",
                 messages=[{"role": "user", "content": prompt}]
             )
