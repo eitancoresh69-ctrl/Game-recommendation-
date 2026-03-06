@@ -1,158 +1,326 @@
+import requests
+from datetime import datetime, timedelta
 import streamlit as st
-import api_sofascore as api
-import ai_analyzer as ai
-import os
-from datetime import datetime
+import time
+import json
 
-st.set_page_config(page_title="SportIQ ULTRA v2", layout="wide", initial_sidebar_state="expanded")
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "Origin": "https://www.sofascore.com",
+    "Referer": "https://www.sofascore.com/",
+    "Cache-Control": "no-cache"
+}
 
-if 'ai_results' not in st.session_state: st.session_state.ai_results = {}
-if 'selected_sport' not in st.session_state: st.session_state.selected_sport = "כדורגל ⚽"
+TARGET_LEAGUES = [
+    'UEFA Champions League', 'NBA', 'Super League', 'CBA', 
+    'Ligat HaAl', 'LaLiga', 'Copa del Rey', 'Supercopa',
+    'Premier League', 'FA Cup', 'EFL Cup', 'Ligue 1',
+    'Serie A', 'Bundesliga', 'MLS'
+]
 
-st.markdown("""
-    <style>
-        * { direction: rtl !important; font-family: 'Segoe UI', 'Heebo', sans-serif !important; }
-        .stApp { background: linear-gradient(135deg, #02040a 0%, #0a1622 100%) !important; color: #e8f4f8 !important; }
-        [data-testid="stSidebar"] { background: linear-gradient(180deg, #0c1220 0%, #131d2d 100%) !important; border-left: 2px solid rgba(0,240,255,0.15) !important; }
-        .stRadio > div[role="radiogroup"] > label > div > div > p { color: #ffffff !important; font-size: 15px !important; font-weight: 500 !important; }
-        .stTextInput > div > div > input { color: #ffffff !important; }
-        h1, h2, h3, h4 { color: #00f0ff !important; font-weight: 700 !important; }
-        p, span, div, label { text-align: right !important; direction: rtl !important; }
-        .metric-card { background: rgba(0, 240, 255, 0.05); padding: 15px; border-radius: 10px; border: 1px solid rgba(0, 240, 255, 0.2); text-align: center; }
-        .metric-val { font-size: 1.8rem; font-weight: bold; color: #00ff88; }
-        .metric-label { font-size: 0.9rem; color: #a8b2c1; }
-        .data-box { background: rgba(17, 25, 39, 0.6); border: 1px solid rgba(0, 240, 255, 0.15); border-radius: 10px; padding: 18px; margin-bottom: 15px; }
-        .form-badge { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 4px; font-weight: 900; font-size: 12px; margin: 0 3px; color: #111927; }
-    </style>
-""", unsafe_allow_html=True)
+POS_MAP = {"G": "GK", "D": "CB", "M": "CM", "F": "ST"}
 
-col_sport, col_title = st.columns([1, 3])
-with col_title:
-    st.markdown("<h1 style='text-align:right;'>⚡ SportIQ ULTRA v2</h1>", unsafe_allow_html=True)
-with col_sport:
-    sport_choice = st.radio("בחר ענף:", ["כדורגל ⚽", "כדורסל 🏀"], horizontal=True, label_visibility="collapsed")
-    st.session_state.selected_sport = sport_choice
+def get_israel_time(utc_timestamp):
+    """המרת UTC לשעון ישראל (UTC+2/+3 בהתאם לשעון קיץ)"""
+    try:
+        utc_time = datetime.utcfromtimestamp(utc_timestamp)
+        # בדוק אם בשעון קיץ בישראל (מרץ-אוקטובר בערך)
+        israel_offset = 3 if (utc_time.month in [3,4,5,6,7,8,9]) and utc_time.day > 20 else 2
+        israel_time = utc_time + timedelta(hours=israel_offset)
+        return israel_time
+    except:
+        return datetime.utcfromtimestamp(utc_timestamp)
 
-st.divider()
+@st.cache_data(ttl=1800)
+def fetch_games_for_dates(sport="soccer", days=7):
+    """מושך משחקים לימים הקרובים עם פילטור ליגות"""
+    api_sport = "football" if sport == "כדורגל ⚽" else "basketball"
+    today = datetime.now()
+    games_by_date = {}
 
-with st.spinner("🔄 מעדכן נתונים..."):
-    games_by_date = api.fetch_games_for_dates(sport=sport_choice, days=5)
-
-if not games_by_date:
-    st.error("❌ לא נמצאו משחקים בימים הקרובים")
-    st.stop()
-
-st.markdown("### 📅 בחר תאריך למשחקים:")
-dates_list = sorted(list(games_by_date.keys()))
-formatted_dates = [datetime.strptime(d, "%Y-%m-%d").strftime("%d/%m") for d in dates_list]
-
-selected_date_index = st.radio("תאריך:", range(len(dates_list)), format_func=lambda x: formatted_dates[x], horizontal=True, label_visibility="collapsed")
-selected_date = dates_list[selected_date_index]
-daily_games = games_by_date[selected_date]
-
-with st.sidebar:
-    st.markdown("### 🔍 סינון משחקים להיום")
-    search_query = st.text_input("חפש שם קבוצה...", placeholder="לדוגמה: מכבי...")
-    st.divider()
-    
-    if search_query:
-        daily_games = [g for g in daily_games if search_query.lower() in g['home'].lower() or search_query.lower() in g['away'].lower()]
-    
-    if not daily_games:
-        st.warning("לא נמצאו משחקים לחיפוש זה.")
-        st.stop()
+    for i in range(days):
+        target_date = (today + timedelta(days=i)).strftime("%Y-%m-%d")
+        url = f"https://api.sofascore.com/api/v1/sport/{api_sport}/scheduled-events/{target_date}"
+        games_by_date[target_date] = []
         
-    game_options = {f"{g['time']} | {g['home']} - {g['away']}": g for g in daily_games}
-    st.markdown("**👇 בחר משחק לניתוח:**")
-    selected_game_str = st.radio("רשימת משחקים", options=list(game_options.keys()), label_visibility="collapsed")
-    selected_game = game_options[selected_game_str]
-
-with st.spinner("📊 מנתח נתונים, יחסים ופצועים..."):
-    deep_data = api.get_game_deep_data(selected_game['id'], selected_game['home_id'], selected_game['away_id'], selected_game['home'], selected_game['away'])
-
-st.markdown(f"""
-    <div style='display: flex; justify-content: space-between; align-items: center; margin: 20px 0; background: rgba(0,240,255,0.1); padding: 20px; border-radius: 15px;'>
-        <h2 style='margin: 0; flex: 1; text-align: right;'>{selected_game['home']}</h2>
-        <span style='color: #00f0ff; font-size: 1.2rem; font-weight: bold; background: #0c1220; padding: 5px 15px; border-radius: 20px;'>{selected_game['time']} | {selected_game['league']}</span>
-        <h2 style='margin: 0; flex: 1; text-align: left;'>{selected_game['away']}</h2>
-    </div>
-""", unsafe_allow_html=True)
-
-tab1, tab2, tab3 = st.tabs(["💰 נתונים ויחסים", "⚔️ היסטוריה וסטטיסטיקה", "🧠 ניתוח AI חכם"])
-
-with tab1:
-    st.markdown("#### 🎲 יחסי הימורים (Match Odds)")
-    odds = deep_data['odds']
+        try:
+            res = requests.get(url, headers=HEADERS, timeout=10)
+            if res.status_code == 200:
+                for event in res.json().get("events", []):
+                    league = event.get("tournament", {}).get("name", "")
+                    if any(target in league for target in TARGET_LEAGUES):
+                        israel_time = get_israel_time(event.get("startTimestamp", 0))
+                        
+                        games_by_date[target_date].append({
+                            "id": event.get("id"),
+                            "time": israel_time.strftime("%H:%M"),
+                            "datetime": israel_time.strftime("%Y-%m-%d %H:%M"),
+                            "league": league,
+                            "home": event.get("homeTeam", {}).get("name", "Unknown"),
+                            "home_id": event.get("homeTeam", {}).get("id"),
+                            "away": event.get("awayTeam", {}).get("name", "Unknown"),
+                            "away_id": event.get("awayTeam", {}).get("id"),
+                        })
+                games_by_date[target_date].sort(key=lambda x: x['time'])
+        except Exception as e: 
+            pass
     
-    st.markdown(f"""
-        <div style="display:flex; gap:15px; margin-bottom:20px;">
-            <div class="metric-card" style="flex:1;"><div class="metric-label">ניצחון בית (1)</div><div class="metric-val">{odds.get('1', '-')}</div></div>
-            <div class="metric-card" style="flex:1;"><div class="metric-label">תיקו (X)</div><div class="metric-val" style="color:#ffd94a;">{odds.get('X', '-')}</div></div>
-            <div class="metric-card" style="flex:1;"><div class="metric-label">ניצחון חוץ (2)</div><div class="metric-val" style="color:#ff3b5c;">{odds.get('2', '-')}</div></div>
-        </div>
-    """, unsafe_allow_html=True)
+    return {k: v for k, v in games_by_date.items() if v}
 
-    col_form, col_inj = st.columns([1, 1], gap="large")
+def get_team_stats(team_id, include_home_away=False):
+    """מושך סטטיסטיקות מלאות של קבוצה"""
+    stats = {
+        "form": [],
+        "goals_scored": 0,
+        "goals_conceded": 0,
+        "wins": 0,
+        "draws": 0,
+        "losses": 0,
+        "total_games": 0,
+        "win_rate": 0,
+        "avg_goals_for": 0,
+        "avg_goals_against": 0,
+        "home_form": [],
+        "away_form": []
+    }
     
-    with col_form:
-        st.markdown("#### 📋 כושר נוכחי (5 אחרונים)")
-        def render_form(team, form_data):
-            html = f"<div style='margin-bottom:10px;'><b style='color:#00f0ff;'>{team}</b><div style='display:flex; gap:4px; margin-top:5px;'>"
-            for res, color in form_data: html += f"<span class='form-badge' style='background-color:{color};'>{res}</span>"
-            return html + "</div></div>"
-        st.markdown(f"<div class='data-box'>{render_form(selected_game['home'], deep_data['home_stats'].get('form', []))}{render_form(selected_game['away'], deep_data['away_stats'].get('form', []))}</div>", unsafe_allow_html=True)
-        
-    with col_inj:
-        st.markdown("#### 🚑 שחקנים חסרים / פצועים")
-        st.markdown(f"<div class='data-box'>", unsafe_allow_html=True)
-        st.markdown(f"**{selected_game['home']}:**")
-        for p in deep_data.get('missing_home', []):
-            if p in ["סגל מלא", "נתונים לא זמינים"]: st.success(p)
-            else: st.error(f"🚑 {p}")
+    url = f"https://api.sofascore.com/api/v1/team/{team_id}/events/last/0"
+    
+    try:
+        res = requests.get(url, headers=HEADERS, timeout=8)
+        if res.status_code == 200:
+            events = res.json().get("events", [])[:15]  # 15 משחקים אחרונים
             
-        st.markdown(f"**{selected_game['away']}:**")
-        for p in deep_data.get('missing_away', []):
-            if p in ["סגל מלא", "נתונים לא זמינים"]: st.success(p)
-            else: st.error(f"🚑 {p}")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-with tab2:
-    if deep_data['h2h_summary'].get('total', 0) > 0:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric('סה"כ משחקים', deep_data['h2h_summary'].get('total', 0))
-        c2.metric("ניצחונות בית", deep_data['h2h_summary'].get('home_wins', 0))
-        c3.metric("תיקו", deep_data['h2h_summary'].get('draws', 0))
-        c4.metric("ניצחונות חוץ", deep_data['h2h_summary'].get('away_wins', 0))
-        st.divider()
-        for match in deep_data['h2h_matches']:
-            st.markdown(f"<div class='data-box' style='text-align:center;'><b>{match['home']}</b> {match['home_score']}-{match['away_score']} <b>{match['away']}</b><br><small>{match['date']} | {match['result']}</small></div>", unsafe_allow_html=True)
-    else:
-        st.info("אין מפגשים קודמים מתועדים בין הקבוצות.")
-
-with tab3:
-    st.markdown("#### 🧠 מנוע ניתוח AI")
-    ai_provider = st.radio("בחר ספק מודל AI:", ["Groq (Llama 3 - מומלץ חינם)", "ChatGPT (OpenAI)", "Gemini (Google)"], horizontal=True)
+            for e in events:
+                h_score = e.get("homeScore", {}).get("current", 0)
+                a_score = e.get("awayScore", {}).get("current", 0)
+                is_h = e.get("homeTeam", {}).get("id") == team_id
+                
+                # סטטיסטיקות כללי
+                stats["goals_scored"] += h_score if is_h else a_score
+                stats["goals_conceded"] += a_score if is_h else h_score
+                stats["total_games"] += 1
+                
+                # תוצאה
+                if h_score == a_score:
+                    stats["form"].append(("ת", "#4a6070"))
+                    stats["draws"] += 1
+                elif (is_h and h_score > a_score) or (not is_h and a_score > h_score):
+                    stats["form"].append(("נ", "#00ff88"))
+                    stats["wins"] += 1
+                else:
+                    stats["form"].append(("ה", "#ff3b5c"))
+                    stats["losses"] += 1
+                
+                # פרדות בית/חוץ
+                if include_home_away:
+                    if is_h:
+                        if h_score == a_score:
+                            stats["home_form"].append(("ת", "#4a6070"))
+                        elif h_score > a_score:
+                            stats["home_form"].append(("נ", "#00ff88"))
+                        else:
+                            stats["home_form"].append(("ה", "#ff3b5c"))
+                    else:
+                        if h_score == a_score:
+                            stats["away_form"].append(("ת", "#4a6070"))
+                        elif a_score > h_score:
+                            stats["away_form"].append(("נ", "#00ff88"))
+                        else:
+                            stats["away_form"].append(("ה", "#ff3b5c"))
+            
+            # חישובים
+            if stats["total_games"] > 0:
+                stats["win_rate"] = (stats["wins"] / stats["total_games"]) * 100
+                stats["avg_goals_for"] = stats["goals_scored"] / stats["total_games"]
+                stats["avg_goals_against"] = stats["goals_conceded"] / stats["total_games"]
     
-    # חילוץ מפתח ה-API בהתאם לבחירה
-    if "Gemini" in ai_provider:
-        api_key = os.environ.get("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY", "")
-    elif "ChatGPT" in ai_provider:
-        api_key = os.environ.get("OPENAI_API_KEY") or st.secrets.get("OPENAI_API_KEY", "")
-    else:
-        api_key = os.environ.get("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY", "")
+    except Exception as e:
+        pass
+    
+    return stats
+
+@st.cache_data(ttl=1800)
+def get_h2h_data(game_id, home_id, away_id):
+    """מושך H2H נתונים מלאים"""
+    h2h_data = {
+        "matches": [],
+        "head_to_head": {
+            "home_wins": 0,
+            "away_wins": 0,
+            "draws": 0,
+            "total": 0,
+            "home_goals": 0,
+            "away_goals": 0
+        }
+    }
+    
+    try:
+        # H2H אירועים
+        res = requests.get(
+            f"https://api.sofascore.com/api/v1/event/{game_id}/h2h/events", 
+            headers=HEADERS, 
+            timeout=10
+        )
         
-    if not api_key:
-        st.error(f"❌ חסר מפתח API עבור {ai_provider}. הוסף אותו ל-Secrets או ל-Environment Variables.")
-    else:
-        game_id_str = str(selected_game['id'])
-        if game_id_str in st.session_state.ai_results:
-            st.success("✅ ניתוח הושלם")
-            st.markdown(st.session_state.ai_results[game_id_str])
-            if st.button("🔄 רענן ונתח מחדש"):
-                del st.session_state.ai_results[game_id_str]
-                st.rerun()
-        else:
-            if st.button(f"🚀 הפעל ניתוח AI באמצעות {ai_provider}", use_container_width=True):
-                with st.spinner("🤖 מנתח את כל הנתונים..."):
-                    st.session_state.ai_results[game_id_str] = ai.analyze_match(st.session_state.selected_sport, selected_game, deep_data, api_key, ai_provider)
-                    st.rerun()
+        if res.status_code == 200:
+            events = res.json().get("events", [])[:10]  # 10 משחקים אחרונים
+            
+            for e in events:
+                h_team = e.get("homeTeam", {}).get("name", "")
+                a_team = e.get("awayTeam", {}).get("name", "")
+                h_score = e.get("homeScore", {}).get("current", 0)
+                a_score = e.get("awayScore", {}).get("current", 0)
+                date_str = get_israel_time(e.get("startTimestamp", 0)).strftime("%d/%m/%Y")
+                
+                h2h_data["matches"].append({
+                    "date": date_str,
+                    "home": h_team,
+                    "away": a_team,
+                    "home_score": h_score,
+                    "away_score": a_score,
+                    "result": "ניצחון בית" if h_score > a_score else ("ניצחון חוץ" if a_score > h_score else "תיקו")
+                })
+                
+                # עדכון סטטיסטיקה H2H
+                h2h_data["head_to_head"]["total"] += 1
+                h2h_data["head_to_head"]["home_goals"] += h_score
+                h2h_data["head_to_head"]["away_goals"] += a_score
+                
+                if h_score > a_score:
+                    h2h_data["head_to_head"]["home_wins"] += 1
+                elif a_score > h_score:
+                    h2h_data["head_to_head"]["away_wins"] += 1
+                else:
+                    h2h_data["head_to_head"]["draws"] += 1
+    
+    except Exception as e:
+        pass
+    
+    return h2h_data
+
+@st.cache_data(ttl=1800)
+def get_odds_from_multiple_sources(game_id):
+    """מושך יחסים מכמה מקורות (סופא סקור עיקרי)"""
+    odds_data = {
+        "1": "-",
+        "X": "-", 
+        "2": "-",
+        "over_2_5": "-",
+        "under_2_5": "-"
+    }
+    
+    try:
+        res = requests.get(
+            f"https://api.sofascore.com/api/v1/event/{game_id}/odds/1/all",
+            headers=HEADERS,
+            timeout=5
+        ).json()
+        
+        if res.get("markets"):
+            for market in res.get("markets", []):
+                if market.get("marketName") in ["1x2", "Moneyline"]:
+                    for choice in market.get("choices", []):
+                        odds_data[choice.get("name")] = choice.get("fractionalValue", "-")
+                elif "Over/Under" in market.get("marketName", ""):
+                    for choice in market.get("choices", []):
+                        if "2.5" in str(choice.get("name", "")):
+                            if "Over" in str(choice.get("name", "")):
+                                odds_data["over_2_5"] = choice.get("fractionalValue", "-")
+                            else:
+                                odds_data["under_2_5"] = choice.get("fractionalValue", "-")
+    except:
+        pass
+    
+    return odds_data
+
+def get_team_standings(team_id, league_name):
+    """מושך עמדה בטבלה"""
+    standings = {
+        "position": "-",
+        "points": 0,
+        "played": 0,
+        "wins": 0,
+        "draws": 0,
+        "losses": 0,
+        "gf": 0,
+        "ga": 0
+    }
+    
+    try:
+        # ספסריום: צריך למצוא את Tournament ID תחילה
+        pass  # צריך מיזום נוסף
+    except:
+        pass
+    
+    return standings
+
+def get_missing_players(game_id):
+    """מושך שחקנים חסרים"""
+    missing = {
+        "home": [],
+        "away": []
+    }
+    
+    try:
+        res = requests.get(
+            f"https://api.sofascore.com/api/v1/event/{game_id}/lineups",
+            headers=HEADERS,
+            timeout=8
+        ).json()
+        
+        home_missing = [
+            f"{p.get('player', {}).get('name', '')} ({POS_MAP.get(p.get('player', {}).get('position', ''), 'N/A')})"
+            for p in res.get("home", {}).get("missingPlayers", [])
+        ]
+        away_missing = [
+            f"{p.get('player', {}).get('name', '')} ({POS_MAP.get(p.get('player', {}).get('position', ''), 'N/A')})"
+            for p in res.get("away", {}).get("missingPlayers", [])
+        ]
+        
+        missing["home"] = home_missing if home_missing else ["סגל מלא"]
+        missing["away"] = away_missing if away_missing else ["סגל מלא"]
+    except:
+        missing["home"] = ["נתונים לא זמינים"]
+        missing["away"] = ["נתונים לא זמינים"]
+    
+    return missing
+
+@st.cache_data(ttl=1800)
+def get_game_deep_data(game_id, home_id, away_id):
+    """מושך כל הנתונים העמוקים למשחק - גרסה משופרת"""
+    data = {
+        "odds": {"1": "-", "X": "-", "2": "-", "over_2_5": "-", "under_2_5": "-"},
+        "h2h_matches": [],
+        "h2h_summary": {},
+        "home_stats": {},
+        "away_stats": {},
+        "missing_home": ["נתונים לא זמינים"],
+        "missing_away": ["נתונים לא זמינים"],
+        "team_standings": {
+            "home": {},
+            "away": {}
+        }
+    }
+    
+    # 1. יחסים
+    data["odds"] = get_odds_from_multiple_sources(game_id)
+    time.sleep(0.3)
+    
+    # 2. H2H מלא
+    h2h = get_h2h_data(game_id, home_id, away_id)
+    data["h2h_matches"] = h2h["matches"]
+    data["h2h_summary"] = h2h["head_to_head"]
+    time.sleep(0.3)
+    
+    # 3. סטטיסטיקות קבוצות
+    data["home_stats"] = get_team_stats(home_id, include_home_away=True)
+    data["away_stats"] = get_team_stats(away_id, include_home_away=True)
+    time.sleep(0.3)
+    
+    # 4. שחקנים חסרים
+    missing = get_missing_players(game_id)
+    data["missing_home"] = missing["home"]
+    data["missing_away"] = missing["away"]
+    
+    return data
