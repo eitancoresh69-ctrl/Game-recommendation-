@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 import streamlit as st
 import time
 import os
+import re
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
@@ -11,27 +12,46 @@ HEADERS = {
     "Cache-Control": "no-cache"
 }
 
-# ✅ TARGET LEAGUES - ONLY 8 LEAGUES YOU SELECTED
+# ✅ EXACT TARGET LEAGUES - NO FALSE MATCHES
 TARGET_LEAGUES = {
-    'כדורגל ⚽': [
-        'UEFA Champions League',           # ליגת האלופות
-        'Ligat Winner',                    # ליגת העל בישראל
-        'LaLiga',                          # ליגה הספרדית
-        'Copa del Rey',                    # גביע הספרד
-        'Supercopa de España',             # סופר גביע ספרד
-        'Premier League',                  # ליגה האנגלית
-        'FA Cup',                          # גביע באנגליה
-        'EFL Cup',                         # קפה של ליגה באנגליה
-        'Ligue 1',                         # ליגה הצרפתית
-        'Coupe de France'                  # גביע צרפת
-    ],
-    'כדורסל 🏀': [
-        'NBA',                             # NBA
-        'Israeli Basketball League',       # ליגת כדורסל בישראל
-        'Basketball League',               # גם ככה יש
-        'CBA'                              # ליגת הכדורסל של סין
+    'כדורגל ⚽': {
+        'UEFA Champions League': 'ליגת האלופות',
+        'Ligat Winner': 'ליגת העל',
+        'LaLiga': 'La Liga',
+        'Copa del Rey': 'קופה דל ריי',
+        'Supercopa de España': 'סופר קופה',
+        'Premier League': 'פרימיר ליג',
+        'FA Cup': 'גביע FA',
+        'EFL Cup': 'גביע EFL',
+        'Ligue 1': 'ליג 1',
+        'Coupe de France': 'קופה דה פראנס'
+    },
+    'כדורסל 🏀': {
+        'NBA': 'NBA',
+        'Israeli Basketball League': 'ליגה בישראל',
+        'Basketball League': 'ליגה',
+        'CBA': 'ליגה סינית'
     ]
 }
+
+# ✅ Team names translation
+TEAM_NAMES_HE = {
+    'Al Ahly FC': 'אל אהلي',
+    'Arab Contractors FC': 'קבלנים ערבים',
+    'Zamalek SC': 'זמלק',
+    'Pyramids FC': 'פירמידס',
+    'Tanta SC': 'טנתה',
+    'Ceramica Cleopatra': 'קרמיקה קליאופטרה',
+    'Ipswich FC': 'איפסוויץ',
+    'Redlands United': 'רדלנדס',
+    'Holland Park Hawks': 'הולנד פארק',
+    'Broadbeach United': 'ברודביץ',
+    # Add more as needed
+}
+
+def translate_team(team_name):
+    """Translate team name to Hebrew if available"""
+    return TEAM_NAMES_HE.get(team_name, team_name)
 
 def get_israel_time(utc_timestamp):
     """המרה של UTC לשעון ישראלי עם DST"""
@@ -39,7 +59,6 @@ def get_israel_time(utc_timestamp):
         if utc_timestamp == 0:
             return datetime.now()
         utc_time = datetime.utcfromtimestamp(utc_timestamp)
-        # DST בישראל: מרץ-אוקטובר +3, אחרת +2
         is_dst = (utc_time.month in [3,4,5,6,7,8,9,10]) and utc_time.day > 20
         israel_offset = 3 if is_dst else 2
         return utc_time + timedelta(hours=israel_offset)
@@ -52,31 +71,45 @@ def game_has_started(start_timestamp):
         if start_timestamp == 0:
             return False
         
-        # ✅ FIX: השתמש בשעה ישראלית לשני הצדדים!
         game_time = get_israel_time(start_timestamp)
         
-        # זמן ישראלי כעת
         utc_now = datetime.utcnow()
         is_dst = (utc_now.month in [3,4,5,6,7,8,9,10]) and utc_now.day > 20
         israel_offset = 3 if is_dst else 2
         now_israel = utc_now + timedelta(hours=israel_offset)
         
-        # בדיקה: אם משחק התחיל
         is_started = game_time < now_israel
-        
         return is_started
     except Exception as e:
-        st.error(f"❌ שגיאה בבדיקת זמן משחק: {str(e)}")
         return False
+
+def league_matches_target(league_name, sport):
+    """בדיקה מדויקת אם ליגה בתוך הליגות המטרה"""
+    target_leagues = TARGET_LEAGUES.get(sport, {})
+    league_lower = league_name.lower().strip()
+    
+    for target_league_en, target_league_he in target_leagues.items():
+        target_lower = target_league_en.lower().strip()
+        
+        # ✅ Exact match first
+        if league_lower == target_lower:
+            return True, target_league_he
+        
+        # ✅ Substring match with word boundaries (but NOT "League" alone)
+        # For example: "Ligue 1" should match "Ligue 1" not "Basketball League"
+        pattern = r'\b' + re.escape(target_lower) + r'\b'
+        if re.search(pattern, league_lower):
+            return True, target_league_he
+    
+    return False, None
 
 @st.cache_data(ttl=1800)
 def fetch_games_for_dates(sport="כדורגל ⚽", days=7):
-    """טעינת משחקים עם סינון לפי ליגות נבחרות וביטול משחקים שכבר התחילו"""
+    """טעינת משחקים עם סינון מדויק לליגות נבחרות"""
     api_sport = "football" if sport == "כדורגל ⚽" else "basketball"
     today = datetime.now()
     games_by_date = {}
-    target_league_names = TARGET_LEAGUES.get(sport, [])
-
+    
     for i in range(days):
         target_date = (today + timedelta(days=i)).strftime("%Y-%m-%d")
         url = f"https://api.sofascore.com/api/v1/sport/{api_sport}/scheduled-events/{target_date}"
@@ -89,42 +122,45 @@ def fetch_games_for_dates(sport="כדורגל ⚽", days=7):
                     league = event.get("tournament", {}).get("name", "")
                     start_timestamp = event.get("startTimestamp", 0)
                     
-                    # ✅ סינון 1: רק ליגות שבחרנו
-                    league_match = False
-                    for target_league in target_league_names:
-                        if target_league.lower() in league.lower():
-                            league_match = True
-                            break
-                    
-                    if not league_match:
+                    # ✅ בדיקה מדויקת של ליגה
+                    is_target_league, league_he = league_matches_target(league, sport)
+                    if not is_target_league:
                         continue
                     
-                    # ✅ סינון 2: משחקים שכבר התחילו
+                    # ✅ סינון משחקים שכבר התחילו
                     if game_has_started(start_timestamp):
                         continue
                     
                     israel_time = get_israel_time(start_timestamp)
+                    
+                    # ✅ Translate team names
+                    home_name = translate_team(event.get("homeTeam", {}).get("name", "Unknown"))
+                    away_name = translate_team(event.get("awayTeam", {}).get("name", "Unknown"))
+                    
                     games_by_date[target_date].append({
                         "id": event.get("id"),
                         "time": israel_time.strftime("%H:%M"),
                         "datetime": israel_time.strftime("%Y-%m-%d %H:%M"),
                         "date": target_date,
                         "league": league,
+                        "league_he": league_he,
                         "home": event.get("homeTeam", {}).get("name", "Unknown"),
+                        "home_he": home_name,
                         "home_id": event.get("homeTeam", {}).get("id"),
                         "away": event.get("awayTeam", {}).get("name", "Unknown"),
+                        "away_he": away_name,
                         "away_id": event.get("awayTeam", {}).get("id"),
                         "start_timestamp": start_timestamp
                     })
                 
                 games_by_date[target_date].sort(key=lambda x: x['time'])
         except Exception as e: 
-            st.warning(f"⚠️ שגיאה בטעינת משחקים ל-{target_date}: {str(e)}")
+            st.warning(f"⚠️ שגיאה בטעינת משחקים: {str(e)}")
     
     return {k: v for k, v in games_by_date.items() if v}
 
-def get_team_stats(team_id, include_home_away=False):
-    """קבלת סטטיסטיקות נרחבות של הקבוצה"""
+def get_team_stats(team_id):
+    """קבלת סטטיסטיקות קבוצה"""
     stats = {
         "form": [], 
         "goals_scored": 0, 
@@ -135,16 +171,14 @@ def get_team_stats(team_id, include_home_away=False):
         "total_games": 0, 
         "win_rate": 0, 
         "avg_goals_for": 0, 
-        "avg_goals_against": 0, 
-        "home_form": [], 
-        "away_form": [],
+        "avg_goals_against": 0,
         "last_5_form": []
     }
     url = f"https://api.sofascore.com/api/v1/team/{team_id}/events/last/0"
     try:
         res = requests.get(url, headers=HEADERS, timeout=8)
         if res.status_code == 200:
-            events = res.json().get("events", [])[:20]  # 20 משחקים
+            events = res.json().get("events", [])[:20]
             for idx, e in enumerate(events):
                 h_score = e.get("homeScore", {}).get("current")
                 a_score = e.get("awayScore", {}).get("current")
@@ -164,7 +198,6 @@ def get_team_stats(team_id, include_home_away=False):
                 else:
                     stats["form"].append(("ה", "#ff3b5c")); stats["losses"] += 1
                 
-                # טופס 5 משחקים אחרונים
                 if idx < 5:
                     stats["last_5_form"].append(stats["form"][-1])
             
@@ -178,7 +211,7 @@ def get_team_stats(team_id, include_home_away=False):
 
 @st.cache_data(ttl=1800)
 def get_h2h_data(game_id, home_id, away_id):
-    """קבלת נתוני H2H מורחבים"""
+    """קבלת נתוני H2H"""
     h2h_data = {
         "matches": [], 
         "head_to_head": {
@@ -223,7 +256,6 @@ def get_h2h_data(game_id, home_id, away_id):
                 if len(h2h_data["matches"]) >= 15: 
                     break
         
-        # חישוב ממוצע שערים
         if h2h_data["head_to_head"]["total"] > 0:
             total_goals = h2h_data["head_to_head"]["home_goals"] + h2h_data["head_to_head"]["away_goals"]
             h2h_data["head_to_head"]["avg_goals"] = total_goals / h2h_data["head_to_head"]["total"]
@@ -233,7 +265,7 @@ def get_h2h_data(game_id, home_id, away_id):
     return h2h_data
 
 def get_odds_from_the_odds_api(home_team, away_team):
-    """קבלת יחסים מ-The Odds API"""
+    """קבלת יחסים"""
     odds_data = {"1": "לא זמין", "X": "לא זמין", "2": "לא זמין", "over_2_5": "-", "under_2_5": "-"}
     api_key = os.environ.get("ODDS_API_KEY") or st.secrets.get("ODDS_API_KEY", "")
     if not api_key: 
@@ -267,7 +299,7 @@ def get_odds_from_the_odds_api(home_team, away_team):
     return odds_data
 
 def get_missing_players(game_id):
-    """קבלת רשימת שחקנים נפצעים"""
+    """קבלת שחקנים נפצעים"""
     missing = {"home": [], "away": []}
     try:
         res = requests.get(f"https://api.sofascore.com/api/v1/event/{game_id}/lineups", headers=HEADERS, timeout=8).json()
@@ -283,7 +315,7 @@ def get_missing_players(game_id):
 
 @st.cache_data(ttl=1800)
 def get_game_deep_data(game_id, home_id, away_id, home_team="", away_team=""):
-    """קבלת כל נתוני המשחק בעומק"""
+    """קבלת כל נתוני המשחק"""
     data = {
         "odds": {"1": "לא זמין", "X": "לא זמין", "2": "לא זמין", "over_2_5": "-", "under_2_5": "-"},
         "h2h_matches": [], 

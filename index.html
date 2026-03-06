@@ -235,14 +235,14 @@ st.divider()
 
 # Sidebar
 with st.sidebar:
-    st.markdown("<h2 style='text-align:center;'>🎯 בחירות</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 style='text-align:center; color: #00f0ff;'>🎯 בחר משחק</h2>", unsafe_allow_html=True)
     st.divider()
     
     # בחירת ספורט
     sport_choice = st.radio(
-        "🏅 ענף ספורט:",
+        "🏅 ספורט:",
         ["כדורגל ⚽", "כדורסל 🏀"],
-        horizontal=False,
+        horizontal=True,
         key="sport_choice"
     )
     st.session_state.selected_sport = sport_choice
@@ -250,77 +250,75 @@ with st.sidebar:
     st.divider()
     
     # טעינת משחקים
-    st.markdown("📅 **משחקים הקרובים**")
     with st.spinner("🔄 טוען משחקים..."):
         games_by_date = api.fetch_games_for_dates(sport=sport_choice, days=7)
     
     if not games_by_date:
-        st.error("❌ לא נמצאו משחקים בליגות המטרה")
+        st.error("❌ לא נמצאו משחקים")
         st.stop()
     
-    # בחירת טווח תאריכים
+    # בחירת תאריכים
     dates_list = sorted(list(games_by_date.keys()))
     col_start, col_end = st.columns(2)
     
     with col_start:
-        start_date = st.selectbox(
-            "מתאריך:",
-            dates_list,
-            index=0,
-            key="start_date"
-        )
-    
+        start_date = st.selectbox("מ:", dates_list, index=0, key="start_date", label_visibility="collapsed")
     with col_end:
-        end_date = st.selectbox(
-            "עד תאריך:",
-            dates_list,
-            index=min(2, len(dates_list)-1),
-            key="end_date"
-        )
+        end_date = st.selectbox("עד:", dates_list, index=min(2, len(dates_list)-1), key="end_date", label_visibility="collapsed")
     
     st.divider()
     
-    # ✅ סינון משחקים - רק משחקים עתידיים
+    # סינון משחקים
     filtered_games = []
     for date_str in dates_list:
         if start_date <= date_str <= end_date:
             for game in games_by_date[date_str]:
-                # וודא שמשחק לא התחיל
                 if not api.game_has_started(game.get('start_timestamp', 0)):
                     filtered_games.append(game)
     
     if not filtered_games:
-        st.warning("⚠️ אין משחקים בטווח התאריכים שנבחר")
+        st.warning("⚠️ אין משחקים")
         st.stop()
     
-    # בחירת משחק - עם טעינה טובה יותר
-    game_options = {}
-    for g in filtered_games:
+    st.markdown(f"**📅 {len(filtered_games)} משחקים זמינים**")
+    
+    # ✅ BEAUTIFUL GAME CARDS
+    selected_game = None
+    
+    for i, g in enumerate(filtered_games):
+        game_time = api.get_israel_time(g.get('start_timestamp', 0))
+        utc_now = datetime.utcnow()
+        is_dst = (utc_now.month in [3,4,5,6,7,8,9,10]) and utc_now.day > 20
+        israel_offset = 3 if is_dst else 2
+        now_israel = utc_now + timedelta(hours=israel_offset)
+        time_diff = game_time - now_israel
+        hours_left = time_diff.total_seconds() / 3600
+        
         time_str = g['time']
-        home = g['home']
-        away = g['away']
-        league = g['league'][:15]
-        key = f"🕐 {time_str}  |  {home} ⚔️  {away}  |  {league}"
-        game_options[key] = g
+        home = g.get('home_he', g['home'])
+        away = g.get('away_he', g['away'])
+        league_he = g.get('league_he', g['league'][:15])
+        
+        card_bg = "#0a1825" if i % 2 == 0 else "#0d1f2d"
+        
+        card_html = f"""<div style='background: linear-gradient(135deg, {card_bg} 0%, rgba(0,240,255,0.05) 100%);border: 2px solid rgba(0,240,255,0.3);border-radius: 12px;padding: 14px;margin-bottom: 10px;'><div style='display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;'><span style='color: #ffd94a; font-weight: 700; font-size: 0.85rem;'>🕐 {time_str}</span><span style='color: #00ff88; font-weight: 600; font-size: 0.7rem;'>⏳ {hours_left:.1f}h</span></div><div style='display: flex;justify-content: space-between;align-items: center;margin-bottom: 8px;'><span style='color: #e8f4f8;font-weight: 600;font-size: 0.9rem;flex: 1;text-align: right;margin-right: 8px;'>{home}</span><span style='color: #00f0ff;font-size: 0.8rem;font-weight: 700;'>⚔️</span><span style='color: #e8f4f8;font-weight: 600;font-size: 0.9rem;flex: 1;text-align: left;margin-left: 8px;'>{away}</span></div><div style='color: #a8b2c1;font-size: 0.7rem;border-top: 1px solid rgba(0,240,255,0.15);padding-top: 6px;'>📍 {league_he}</div></div>"""
+        
+        st.markdown(card_html, unsafe_allow_html=True)
+        
+        if st.button(
+            label=f"בחר {home} vs {away}",
+            key=f"game_{g['id']}_{i}",
+            use_container_width=True,
+            help=f"{league_he} • {time_str}"
+        ):
+            selected_game = g
     
-    st.markdown("**🎯 בחר משחק לניתוח:**")
-    
-    if game_options:
-        selected_game_str = st.selectbox(
-            "משחק:",
-            list(game_options.keys()),
-            label_visibility="collapsed",
-            index=0,
-            format_func=lambda x: x
-        )
-        selected_game = game_options[selected_game_str]
-    else:
-        st.error("❌ אין משחקים זמינים")
-        st.stop()
+    if selected_game is None:
+        selected_game = filtered_games[0]
     
     st.divider()
     
-    # ✅ סטטוס משחק נבחר עם זמן ישראלי נכון
+    # ✅ Selected game info
     time_until = api.get_israel_time(selected_game.get('start_timestamp', 0))
     utc_now = datetime.utcnow()
     is_dst = (utc_now.month in [3,4,5,6,7,8,9,10]) and utc_now.day > 20
@@ -329,15 +327,11 @@ with st.sidebar:
     time_diff = time_until - now_israel
     hours = time_diff.total_seconds() / 3600
     
-    # סטטוס
-    st.markdown(f"""
-        <div style='background: rgba(0,240,255,0.08); border-left: 3px solid #00f0ff; padding: 12px; border-radius: 6px;'>
-            <div style='font-size: 0.85rem; color: #a8b2c1; margin-bottom: 4px;'>🎯 משחק נבחר</div>
-            <div style='font-size: 0.95rem; color: #00f0ff; font-weight: 600;'>{selected_game['home']} vs {selected_game['away']}</div>
-            <div style='font-size: 0.8rem; color: #7a8a99; margin-top: 4px;'>{selected_game['league']}</div>
-            <div style='font-size: 0.75rem; color: #00ff88; margin-top: 8px;'>⏰ בעוד {hours:.1f} שעות</div>
-        </div>
-    """, unsafe_allow_html=True)
+    home_he = selected_game.get('home_he', selected_game['home'])
+    away_he = selected_game.get('away_he', selected_game['away'])
+    league_he = selected_game.get('league_he', selected_game['league'])
+    
+    st.markdown(f"""<div style='background: linear-gradient(135deg, rgba(0,240,255,0.15) 0%, rgba(0,255,136,0.05) 100%);border: 2px solid #00f0ff;border-radius: 12px;padding: 14px;'><div style='font-size: 0.8rem; color: #a8b2c1; margin-bottom: 6px;'>🎯 משחק נבחר</div><div style='display: flex;justify-content: space-between;align-items: center;margin-bottom: 8px;'><span style='color: #e8f4f8; font-weight: 700; font-size: 1rem;'>{home_he}</span><span style='color: #00f0ff; font-weight: 700;'>⚔️</span><span style='color: #e8f4f8; font-weight: 700; font-size: 1rem;'>{away_he}</span></div><div style='color: #a8b2c1; font-size: 0.75rem; margin-bottom: 8px;'>📍 {league_he}</div><div style='color: #00ff88; font-size: 0.75rem; font-weight: 700;'>⏰ בעוד {hours:.1f} שעות</div></div>""", unsafe_allow_html=True)
 
 # הטעינת נתונים עמוקים
 st.markdown("### 🔄 טוען נתוני עומק...")
